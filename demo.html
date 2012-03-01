@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>To Do List</title>
+
+    <link rel="stylesheet" href="carbo.min.css" />
+    <link rel="stylesheet" href="http://code.jquery.com/mobile/1.0.1/jquery.mobile.structure-1.0.1.min.css" />
+    <link rel="stylesheet" href="http://mobiscroll.googlecode.com/hg/mobiscroll.css" />
+
+    <style type="text/css">
+        body {font-family: arial, verdana, sans-serif;font-size: 12px;}
+    </style>
+
+    <script src="http://code.jquery.com/jquery-1.6.4.min.js"></script>
+    <script src="http://code.jquery.com/mobile/1.0.1/jquery.mobile-1.0.1.min.js"></script>
+
+    <script type="text/javascript" src="http://mobiscroll.googlecode.com/hg/mobiscroll.js"></script>
+    <script type="text/javascript" src="carbo.storage.js"></script>
+    <script type="text/javascript">
+        var db = Carbo.storage,
+            tasks, task, categories, category, action;
+
+        db.define('Tasks', 'Task', { title: 'string', description: 'string', done: 'boolean', start: 'datetime', end: 'datetime', categoryID: 'int' });
+        db.define('Categories', 'Category', { name: 'string', description: 'string' });
+        db.Categories.hasMany('Tasks', 'categoryID');
+        db.Tasks.hasOne('Categories', 'categoryID');
+        db.Tasks.addIndex('start');
+        db.Tasks.addIndex('end');
+
+        // Demo data
+        categories = db.Categories.select();
+        if (!categories.length) {
+            db.Categories.add({ name: 'Home', description: 'Things to do at home' });
+            db.Categories.add({ name: 'Work', description: 'Things to do in the office' });
+
+            tasks = db.Tasks.select();
+            if (!tasks.length) {
+                db.Tasks.add({ title: 'Trash', description: 'Take out trash', categoryID: 0, done: false });
+                db.Tasks.add({ title: 'Test', description: 'Test CarboStorage', categoryID: 1, done: false });
+            }
+        }
+
+        function loadTasks() {
+            // Generate tasks list
+            tasks = db.Tasks.loadWith('Categories').where(function(t) {
+                return ($('#filter_task_done').prop('checked') ? true : !t.done);
+            }).orderBy('categoryID').orderBy('title').select();
+
+            var html = '',
+                lastCat = -1;
+
+            for (var i = 0; i < tasks.length; i++) {
+                if (tasks[i].categoryID !== lastCat) {
+                    html += '<li data-role="list-divider">' + (tasks[i].Category && tasks[i].Category.name ? tasks[i].Category.name : 'Uncategorized') + '</li>';
+                    lastCat = tasks[i].categoryID;
+                }
+                html += '<li id="task_' + i + '">' +
+                    '<a class="task-edit" data-rel="dialog" data-transition="none" data-index="' + i + '" href="#popup_task">' +
+                        '<h3>' + tasks[i].title + '</h3>' +
+                        '<p>' + tasks[i].description + '</p>' + //', ' + $.datepicker.formatDate('mm/dd/yy', tasks[i].start) + ', ' + $.datepicker.formatDate('mm/dd/yy', tasks[i].end) + '</p>' +
+                    '</a><a class="task-delete" href="#tasks" data-index="' + i + '">Delete</a></li>';
+            }
+            $('#task_list').html(html).listview('refresh');
+
+            // Init actions
+            $('.task-delete').click(function() {
+                db.Tasks.remove(tasks[+$(this).attr('data-index')]);
+                loadTasks();
+                return false;
+            });
+            $('.task-edit').click(function() {
+                task = tasks[+$(this).attr('data-index')];
+            });
+        }
+
+        function loadCategories() {
+            // Generate categories list
+            categories = db.Categories.select();
+            var html = '';
+            for (var i = 0; i < categories.length; i++) {
+                html += '<li id="category_' + i + '">' +
+                    '<a class="category-edit" data-rel="dialog" data-transition="none" data-index="' + i + '" href="#popup_category">' +
+                        '<h3>' + categories[i].name + '</h3>' +
+                        '<p>' + categories[i].description + '</p>' +
+                    '</a><a class="category-delete" href="#categories" data-index="' + i + '">Delete</a></li>';
+            }
+            $('#cat_list').html(html).listview('refresh');
+
+            // Init actions
+            $('.category-delete').click(function() {
+                var cat = categories[+$(this).attr('data-index')];
+                var t = db.Tasks.where('categoryID', cat.__id).select(); // Set categoryID to null for related tasks
+                for (var i = 0; i < t.length; i++) {
+                    t[i].categoryID = null;
+                    db.Tasks.update(t[i]);
+                }
+                db.Categories.remove(cat);
+                loadCategories();
+                return false;
+            });
+            $('.category-edit').click(function() {
+                category = categories[+$(this).attr('data-index')];
+            });
+
+        }
+
+        // Init tasks page
+        $('#tasks').live('pagecreate', function() {
+            $('#filter_task_done').change(function() {
+                loadTasks();
+            });
+            $('#btn_task_add').click(function() {
+                task = null;
+            });
+        }).live('pagebeforeshow', function() {
+            $('.nav-categories').removeClass('ui-btn-active');
+            $('.nav-tasks').addClass('ui-btn-active');
+            loadTasks();
+        });
+
+        // Init add/edit task
+        $('#popup_task').live('pagecreate', function() {
+            $('.mobiscroll').scroller({ preset: 'datetime' });
+            $('#btn_task_save').click(function() {
+                task.title = $('#task_title').val();
+                task.description = $('#task_description').val();
+                task.categoryID = $('#task_category').val() === '' ? null : +$('#task_category').val(); // Type safe conversion
+                task.start = $('#task_start').val() ? $('#task_start').scroller('getDate') : null;
+                task.end = $('#task_end').val() ? $('#task_end').scroller('getDate') : null;
+                task.done = $('#task_done').prop('checked');
+
+                if (task.__id === undefined)
+                    db.Tasks.add(task);
+                else {
+                    db.Tasks.update(task);
+                }
+            });
+        }).live('pagebeforeshow', function() {
+            var cat = db.Categories.select();
+            var html = '<option value="">Uncategorized</option>';
+            for (var i = 0; i < cat.length; i++) {
+                html += '<option value="' + cat[i].__id + '">' + cat[i].name + '</option>';
+            }
+            if (!task) {
+                task = { title: '', description: '' };
+            }
+            $('#task_title').val(task.title);
+            $('#task_description').val(task.description);
+            $('#task_category').html(html).val(task.categoryID).selectmenu('refresh');
+            $('#task_start').val(task.start ? $.scroller.formatDate('mm/dd/yy hh:ii A', task.start) : '');
+            $('#task_end').val(task.end ? $.scroller.formatDate('mm/dd/yy hh:ii A', task.end) : '');
+            $('#task_done').prop('checked', task.done ? true : false).checkboxradio("refresh");
+        });
+
+        // Init categories page
+        $('#categories').live('pagecreate', function() {
+            $('#btn_category_add').click(function() {
+                category = null;
+            });
+        }).live('pagebeforeshow', function() {
+            $('.nav-tasks').removeClass('ui-btn-active');
+            $('.nav-categories').addClass('ui-btn-active');
+            loadCategories();
+        });
+
+        // Init add/edit category
+        $('#popup_category').live('pagecreate', function() {
+            $('#btn_category_save').click(function() {
+                category.name = $('#category_name').val();
+                category.description = $('#category_description').val();
+
+                if (category.__id === undefined)
+                    db.Categories.add(category);
+                else {
+                    db.Categories.update(category);
+                }
+            });
+        }).live('pagebeforeshow', function() {
+            if (!category) {
+                category = { name: '', description: '' };
+            }
+            $('#category_name').val(category.name);
+            $('#category_description').val(category.description);
+        });
+
+    </script>
+</head>
+
+
+<body>
+
+<!-- Start of first page: #one -->
+<div data-role="page" id="tasks">
+
+    <div data-role="header">
+        <h1>To Do List</h1>
+        <div data-role="navbar">
+            <ul>
+                <li><a href="#tasks" class="nav-tasks" data-icon="home">Tasks</a></li>
+                <li><a href="#categories" class="nav-categories" data-icon="gear">Categories</a></li>
+            </ul>
+        </div>
+    </div><!-- /header -->
+
+    <div data-role="content" >
+        <a id="btn_task_add" href="#popup_task" data-rel="dialog" data-transition="none" data-role="button" data-icon="plus">Add</a>
+
+        <br/>
+
+        <fieldset data-role="controlgroup">
+            <input type="checkbox" name="filter_task_done" id="filter_task_done" class="filter_task_done" checked="checked" />
+            <label for="filter_task_done">Show Completed</label>
+        </fieldset>
+
+        <br/>
+
+        <ul id="task_list" data-role="listview" data-dividertheme="a" data-split-theme="a" data-split-icon="delete">
+
+        </ul>
+    </div><!-- /content -->
+
+</div><!-- /page one -->
+
+
+<!-- Start of second page: #categories -->
+<div data-role="page" id="categories">
+
+    <div data-role="header">
+        <h1>To Do List</h1>
+        <div data-role="navbar">
+            <ul>
+                <li><a href="#tasks" class="nav-tasks" data-icon="home">Tasks</a></li>
+                <li><a href="#categories" class="nav-categories" data-icon="gear">Categories</a></li>
+            </ul>
+        </div>
+    </div><!-- /header -->
+
+    <div data-role="content">
+        <a id="btn_category_add" href="#popup_category" data-rel="dialog" data-transition="none" data-role="button" data-icon="plus">Add</a>
+        <br/>
+        <br/>
+
+        <ul id="cat_list" data-role="listview" data-dividertheme="a" data-split-theme="a" data-split-icon="delete">
+
+        </ul>
+    </div><!-- /content -->
+
+</div><!-- /page two -->
+
+
+<!-- Start of third page: #popup_task -->
+<div data-role="page" id="popup_task">
+
+    <div data-role="header">
+        <h1>Add/Edit Task</h1>
+    </div><!-- /header -->
+
+    <div data-role="content">
+        <div data-role="fieldcontain">
+            <label for="task_title">Task Title</label>
+            <input type="text" name="task_title" id="task_title" value=""  />
+        </div>
+
+        <div data-role="fieldcontain">
+            <label for="task_description">Task Description</label>
+            <textarea cols="40" rows="8" name="task_description" id="task_description"></textarea>
+        </div>
+
+        <div data-role="fieldcontain">
+            <label for="task_category">Task Category</label>
+            <select name="task_category" id="task_category" data-native-menu="false"></select>
+        </div>
+
+        <div data-role="fieldcontain">
+            <label for="task_start">Start</label>
+            <input type="text" name="task_start" id="task_start" class="mobiscroll" />
+        </div>
+
+        <div data-role="fieldcontain">
+            <label for="task_end">End</label>
+            <input type="text" name="task_end" id="task_end" class="mobiscroll" />
+        </div>
+
+        <fieldset data-role="controlgroup">
+            <input type="checkbox" name="task_done" id="task_done" />
+            <label for="task_done">It's done</label>
+        </fieldset>
+
+        <fieldset class="ui-grid-a">
+            <div class="ui-block-a"><a id="btn_task_save" href="#tasks" data-rel="back" data-role="button" data-theme="a">Save</a></div>
+            <div class="ui-block-b"><a href="#tasks" data-rel="back" data-role="button" data-theme="d">Cancel</a></div>
+        </fieldset>
+    </div><!-- /content -->
+
+</div><!-- /page popup -->
+
+<!-- Start of third page: #popup_category -->
+<div data-role="page" id="popup_category">
+
+    <div data-role="header">
+        <h1>Add/Edit Category</h1>
+    </div><!-- /header -->
+
+    <div data-role="content">
+        <form id="form_category">
+            <div data-role="fieldcontain">
+                <label for="category_name">Category Name</label>
+                <input type="text" name="category_name" id="category_name" value="" required  />
+            </div>
+
+            <div data-role="fieldcontain">
+                <label for="category_description">Category Description</label>
+                <textarea cols="40" rows="8" name="category_description" id="category_description" required></textarea>
+            </div>
+
+            <fieldset class="ui-grid-a">
+                <div class="ui-block-a"><a id="btn_category_save" href="#categories" data-rel="back" data-role="button" data-theme="a">Save</a></div>
+                <div class="ui-block-b"><a href="#categories" data-rel="back" data-role="button" data-theme="d">Cancel</a></div>
+            </fieldset>
+        </form>
+    </div><!-- /content -->
+
+</div><!-- /page popup -->
+
+</body>
+</html>
